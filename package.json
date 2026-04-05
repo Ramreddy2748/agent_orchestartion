@@ -1,0 +1,31 @@
+{
+  "name": "medlaunch_ai",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc",
+    "seed": "ts-node seed-database.ts",
+    "seed:dry-run": "DRY_RUN=true ts-node seed-database.ts",
+    "search": "ts-node vector-search-test.ts",
+    "mcp": "node dist/mcp-server.js",
+    "mcp:dev": "ts-node src/mcp-server.ts",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@types/node": "^25.5.2",
+    "dotenv": "^17.4.0",
+    "mongodb": "^7.1.1",
+    "pdf-parse": "^1.1.1",
+    "pdf2pic": "^3.2.0",
+    "tesseract.js": "^7.0.0",
+    "typescript": "^6.0.2"
+  },
+  "devDependencies": {
+    "ts-node": "^10.9.2"
+  }
+}
