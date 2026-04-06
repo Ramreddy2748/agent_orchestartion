@@ -31,13 +31,18 @@ export const DEFAULT_SEARCH_LIMIT = 8;
 const MAX_CHAPTER_RESULTS = 200;
 const COMMON_QUERY_TERMS = new Set([
   'about',
+  'all',
+  'and',
   'chapter',
+  'chapters',
+  'cite',
   'exact',
   'exactly',
   'find',
   'for',
   'give',
   'is',
+  'list',
   'me',
   'please',
   'quote',
@@ -46,9 +51,22 @@ const COMMON_QUERY_TERMS = new Set([
   'text',
   'the',
   'there',
+  'tell',
   'verbatim',
   'what',
   'wording'
+]);
+
+const NON_PREFIX_WORDS = new Set([
+  'about',
+  'all',
+  'find',
+  'give',
+  'list',
+  'show',
+  'tell',
+  'the',
+  'what'
 ]);
 
 function escapeRegex(value: string): string {
@@ -70,7 +88,13 @@ function extractChapterPrefix(query: string): string | null {
   if (!match) {
     return null;
   }
-  return normalizeChapterInput(match[1]);
+
+  const candidate = normalizeChapterInput(match[1]);
+  if (NON_PREFIX_WORDS.has(candidate.toLowerCase())) {
+    return null;
+  }
+
+  return candidate;
 }
 
 function isExplicitChapterLookupQuery(query: string, chapterReferences: string[]): boolean {
@@ -83,6 +107,20 @@ function isExplicitChapterLookupQuery(query: string, chapterReferences: string[]
 
 function isExactWordingQuery(query: string): boolean {
   return /(exact wording|exact text|verbatim|quote|show me the exact|show the exact|exact language)/i.test(query);
+}
+
+function shouldShortCircuitToExactChapter(query: string, chapterReferences: string[]): boolean {
+  if (chapterReferences.length !== 1 || !isExplicitChapterLookupQuery(query, chapterReferences)) {
+    return false;
+  }
+
+  const strippedQuery = query
+    .replace(/\b[A-Z]{2,4}\.\d+(?:\.\d+)*\b/gi, ' ')
+    .replace(/\b[A-Z]{2,4}-[A-Z]{1,3}\b/gi, ' ')
+    .replace(/\b(show|give|provide|cite|chapter|exact|exactly|verbatim|full|text|entire|complete|me|the|please)\b/gi, ' ');
+
+  const remainingTerms = extractQueryTerms(strippedQuery);
+  return remainingTerms.length === 0;
 }
 
 function extractQueryTerms(query: string): string[] {
@@ -251,6 +289,19 @@ function filterRelevantResults(results: StandardDocument[]): StandardDocument[] 
   return filtered.length > 0 ? filtered : results;
 }
 
+function buildSearchableText(doc: StandardDocument): string {
+  return [
+    doc.metadata?.chapter,
+    doc.metadata?.section,
+    doc.metadata?.heading,
+    doc.metadata?.sr_id,
+    doc.text
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+}
+
 function isOutOfScopeQuery(query: string, results: StandardDocument[]): boolean {
   const normalized = query.toLowerCase();
   const topResults = filterRelevantResults(results);
@@ -260,10 +311,20 @@ function isOutOfScopeQuery(query: string, results: StandardDocument[]): boolean 
   }
 
   const scoreThresholdMiss = topResults.every((doc) => typeof doc.score === 'number' && doc.score < 0.15);
+  const topScore = topResults[0]?.score ?? 0;
   const mentionsFire = /fire\s+safety|life\s+safety|nfpa|sprinkler|smoke compartment/i.test(normalized);
   const hasRelevantPe = topResults.some((doc) => doc.metadata?.chapter?.startsWith('PE.'));
+  const queryTerms = extractQueryTerms(query).filter((term) => term.length >= 4);
+  const topEvidenceText = topResults.slice(0, 3).map(buildSearchableText).join(' ');
+  const matchedQueryTerms = queryTerms.filter((term) => topEvidenceText.includes(term));
+  const queryCoverage = queryTerms.length === 0 ? 1 : matchedQueryTerms.length / queryTerms.length;
+  const hasChapterSpecificIntent = extractChapterReferences(query).length > 0 || extractChapterPrefix(query) !== null;
 
   if (mentionsFire && !hasRelevantPe) {
+    return true;
+  }
+
+  if (!hasChapterSpecificIntent && queryTerms.length >= 2 && queryCoverage < 0.5 && topScore < 0.8) {
     return true;
   }
 
@@ -379,7 +440,7 @@ export async function searchStandards(query: string, limit: number = DEFAULT_SEA
     }
 
     const chapterReferences = extractChapterReferences(query);
-    if (chapterReferences.length === 1 && isExplicitChapterLookupQuery(query, chapterReferences)) {
+    if (shouldShortCircuitToExactChapter(query, chapterReferences)) {
       return getStandardsByChapter(chapterReferences[0]);
     }
 
@@ -469,6 +530,8 @@ export async function getStandardsByChapter(chapter: string): Promise<string> {
 
     return [
       connectorHeader('chapter-lookup'),
+      `document: ${results[0]?.metadata?.document ?? 'NIAHO Standards'}`,
+      `section: ${results[0]?.metadata?.section ?? 'unknown'}`,
       `chapter: ${normalizedChapter}`,
       'exact_match: true',
       '',
