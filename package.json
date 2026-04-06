@@ -10,7 +10,7 @@
     "search": "ts-node vector-search-test.ts",
     "mcp": "node dist/mcp-server.js",
     "mcp:dev": "ts-node src/mcp-server.ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "ts-node testing/run-all.ts"
   },
   "keywords": [],
   "author": "",

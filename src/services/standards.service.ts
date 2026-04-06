@@ -27,7 +27,8 @@ export interface SearchResultPayload {
   usedVectorSearch: boolean;
 }
 
-export const DEFAULT_SEARCH_LIMIT = 8;
+export const DEFAULT_SEARCH_LIMIT = 5;
+const MAX_SEARCH_LIMIT = 5;
 const MAX_CHAPTER_RESULTS = 200;
 const COMMON_QUERY_TERMS = new Set([
   'about',
@@ -444,7 +445,8 @@ export async function searchStandards(query: string, limit: number = DEFAULT_SEA
       return getStandardsByChapter(chapterReferences[0]);
     }
 
-    const effectiveLimit = Math.max(limit, DEFAULT_SEARCH_LIMIT);
+    const normalizedLimit = Number.isFinite(limit) ? Math.trunc(limit) : DEFAULT_SEARCH_LIMIT;
+    const effectiveLimit = Math.min(Math.max(normalizedLimit, 1), MAX_SEARCH_LIMIT);
     const { results, usedVectorSearch } = await runSemanticSearch(query, effectiveLimit);
     const relevantResults = rankDocuments(filterRelevantResults(results)).slice(0, effectiveLimit);
 

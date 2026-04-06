@@ -1,8 +1,30 @@
 # Healthcare Standards Agent
 
-Healthcare standards retrieval system built for the AI Engineering Intern Challenge. The project ingests the DNV NIAHO hospital standards PDF, stores section-aware vectorized chunks in MongoDB Atlas, and exposes an MCP server for exact chapter lookup, section discovery, and semantic search.
+The project ingests the DNV NIAHO hospital standards PDF, stores section-aware vectorized chunks in MongoDB Atlas, and exposes an MCP server for exact chapter lookup, section discovery, and semantic search.
 
-This implementation was developed and validated using Claude-compatible MCP workflows.
+This implementation was validated using Claude MCP workflows using the Claude connector with different tools.
+
+## Deliverables Checklist
+
+Implemented in this repository:
+
+- `seed-database.ts` for PDF ingestion, chunking, embeddings, and MongoDB insert
+- `src/mcp-server.ts` for the MCP server and tool exposure
+- `package.json` and `tsconfig.json` for project configuration
+- `.env.example` for required environment variables
+- `README.md` for setup, architecture, and design decisions
+- `TEST_RESULTS.md` for the required Q&A, citation, and edge-case outputs
+
+Manual assets still to add before final submission package review:
+
+- Atlas cluster screenshot
+- Atlas collection screenshot
+- Atlas vector search index screenshot
+- Claude/Desktop or other MCP-client usage screenshots or screen recording
+
+Suggested location for those manual assets:
+
+- `docs/screenshots/`
 
 ## What This Project Does
 
@@ -25,7 +47,6 @@ This implementation was developed and validated using Claude-compatible MCP work
 - Seeder is reproducible and supports dry runs
 - Current corpus shape after the latest reseed: `755` documents across `184` chapters
 - Exact chapter reconstruction includes overlap cleanup and PDF artifact cleanup at render time
-- Mock embeddings are commented out in active runtime paths and are not used in normal operation
 
 ## Repository Layout
 
@@ -34,6 +55,10 @@ medlaunch_AI/
 ├── seed-database.ts
 ├── vector-search-test.ts
 ├── mcp-server.ts
+├── testing/
+│   ├── assertions.ts
+│   ├── run-all.ts
+│   └── smoke-test.ts
 ├── src/
 │   ├── mcp-server.ts
 │   ├── db/
@@ -43,8 +68,12 @@ medlaunch_AI/
 │   │   └── standards.service.ts
 │   └── utils/
 │       └── formatting.ts
+├── docs/
+│   └── screenshots/
+│       └── README.md
 ├── .env.example
 ├── package.json
+├── TEST_RESULTS.md
 ├── tsconfig.json
 └── README.md
 ```
@@ -57,7 +86,7 @@ medlaunch_AI/
 2. The seeder extracts chapter sections and normalizes them into chapter records.
 3. Chapters are split by section/subsection first.
 4. Oversized sections are further split into paragraph or bullet-group units.
-5. Overlap is applied only between subchunks from the same section.
+5. Overlap is applied only when a single oversized unit must be split.
 6. Embeddings are generated in conservative batches.
 7. Chunk records are written to MongoDB Atlas.
 8. The MCP server retrieves either:
@@ -126,12 +155,10 @@ RESET_COLLECTION=false
 DRY_RUN=false
 MAX_CHUNKS=0
 
-ALLOW_MOCK_EMBEDDINGS=false
 ```
 
 Notes:
 
-- `ALLOW_MOCK_EMBEDDINGS` is left in the example for compatibility, but runtime mock behavior is intentionally disabled in the active query path and commented out for production/challenge use.
 - `MAX_CHUNKS=0` means no seeding cap.
 
 ## MongoDB Atlas Setup
@@ -203,9 +230,22 @@ The current seeder uses a section-first strategy rather than SR-only slicing.
 - Primary split: chapter/subchapter sections
 - Target chunk range: `400` to `700` tokens
 - Hard split threshold: `800` tokens
-- Overlap: about `60` tokens, applied only between subchunks from the same section
+- Overlap: about `60` tokens, applied only when one oversized unit must be split
 - Long sections are split into smaller paragraph or bullet-group units
 - Standard sections retain `SR.*` awareness where available
+
+## Testing
+
+Run the lightweight smoke suite:
+
+```bash
+npm test
+```
+
+Current test coverage:
+
+- semantic retrieval sanity check for patient rights
+- exact chapter lookup sanity check for `PR.2`
 
 Why this approach:
 
@@ -269,8 +309,7 @@ This section is the fastest path for a reviewer to connect the MCP server.
 
 Primary validated review path:
 
-- Claude Desktop
-- Claude Code
+- Claude Desktop on macOS
 
 The project was validated using Claude-compatible MCP workflows during development.
 
@@ -323,25 +362,20 @@ Notes:
 - The absolute path above is correct for this machine and repository location.
 - If the reviewer clones the repo somewhere else, they must replace the `args[0]` path with their local `dist/mcp-server.js` path.
 
-### Option B: Claude Code
+### Generic MCP Client Command
 
-Claude Code also supports local stdio MCP servers. From the project root, a reviewer can add this server with:
+For MCP-capable clients that use the same local stdio pattern, the server command is:
 
-```bash
-claude mcp add --transport stdio healthcare-standards -- node /Users/varunreddyseelam/Desktop/medlaunch_AI/dist/mcp-server.js
+```json
+{
+  "command": "node",
+  "args": [
+    "/Users/varunreddyseelam/Desktop/medlaunch_AI/dist/mcp-server.js"
+  ]
+}
 ```
 
-Then verify with:
-
-```bash
-claude mcp list
-```
-
-And inside Claude Code:
-
-```text
-/mcp
-```
+This repository was validated in Claude-compatible workflows. Other clients may require a different UI-specific import flow, but the command and arguments stay the same.
 
 ## Available MCP Tools
 
@@ -389,7 +423,7 @@ For convenience, the same Claude Desktop config is repeated here:
 }
 ```
 
-## Example Prompts
+## Prompts we can use
 
 - `Use only the healthcare-standards connector. Show me chapter QM.1 exactly.`
 - `Use only the healthcare-standards connector. Is there a chapter about hand hygiene? Show me the exact wording.`
@@ -412,8 +446,10 @@ Manual validation completed during development:
   - hand hygiene
   - staff competency assessment
 - Claude MCP workflow validation through local stdio server usage
+- documented test matrix in `TEST_RESULTS.md`
 
 There is currently no automated test suite wired into `npm test`.
+
 
 ## Design Choices
 
@@ -461,7 +497,6 @@ Check:
 ### No chapter results returned
 
 Check that:
-
 - the collection is seeded
 - the chapter exists in `metadata.chapter`
 - the chapter ID format matches the stored form, for example `QM.8` or `LS.2`
@@ -469,12 +504,12 @@ Check that:
 ## Scripts
 
 ```bash
-npm run build
-npm run seed
-npm run seed:dry-run
-npm run search
-npm run mcp
-npm run mcp:dev
+npm run build # builds the MCP server for Claude Desktop
+npm run seed # parses the PDF, generates embeddings, and inserts chunks into MongoDB Atlas
+npm run seed:dry-run # validates parsing and chunking without embeddings or database writes
+npm run search # runs a direct vector-search sanity check against the Atlas collection
+npm run mcp # starts the compiled MCP server from dist/
+npm run mcp:dev # starts the MCP server directly from TypeScript source for local development
 ```
 
 ## Submission Notes

@@ -162,8 +162,6 @@ class DatabaseSeeder {
     }
 
    
-   
-
     this.client = new MongoClient(mongoUri);
     this.db = this.client.db('niaho_standards');
     this.chapterSectionMap = { ...DEFAULT_CHAPTER_SECTION_MAP };
@@ -233,7 +231,6 @@ class DatabaseSeeder {
           await this.sleep(retryDelay);
           continue;
         }
-
 
         throw error;
       }
