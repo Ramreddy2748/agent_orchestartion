@@ -1,9 +1,0 @@
-Task 1:
-1) try to debug the file parsing a  verify how iit is verifying all the content in that chapter and section
-
-
-2) debugg chuncking total chunks= Chapter_chunking* sections_chunking
-
-3) do the embeddings and store into Mongodb
-
-

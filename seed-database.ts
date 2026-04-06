@@ -8,18 +8,20 @@ const pdfParse = require('pdf-parse');
 // Load environment variables
 dotenv.config();
 
+// Interface representing a chunk of text extracted from the PDF along with its metadata
 interface ChunkRecord {
-  text: string;
+  text: string; // The text content extracted from the PDF chunk
   chapter: string;
   section: string;
-  chapter_prefix: string;
-  heading: string;
+  chapter_prefix: string; // prefix part like QM, IC  (filters through chapter)
+  heading: string; // its basically the title of chapter
+  // optional id for the source/reference of this chunk it can be missing also
   sr_id?: string;
   content_type: 'standard' | 'interpretive_guidelines' | 'surveyor_guidance' | 'chapter_intro';
   parent_block_id: string;
   block_order: number;
-  subchunk_index: number;
-  subchunk_count: number;
+  subchunk_index: number; // this tells u chunks for single part
+  subchunk_count: number; // tells how many parts this chunk is split into
 }
 
 interface PreparedChunk extends ChunkRecord {
@@ -78,22 +80,45 @@ const DEFAULT_CHAPTER_SECTION_MAP: Record<string, string> = {
   'PH-TA': 'Psychiatric Services - Therapeutic Activities'
 };
 
-const VOYAGE_REQUESTS_PER_MINUTE = Number(process.env.VOYAGE_REQUESTS_PER_MINUTE || 300);
-const VOYAGE_TOKENS_PER_MINUTE = Number(process.env.VOYAGE_TOKENS_PER_MINUTE || 100000);
-const MAX_EMBEDDING_BATCH_TOKENS = Number(
-  process.env.MAX_EMBEDDING_BATCH_TOKENS || Math.max(1000, Math.floor(VOYAGE_TOKENS_PER_MINUTE / VOYAGE_REQUESTS_PER_MINUTE) - 300)
-);
-const MAX_EMBEDDING_BATCH_SIZE = Number(process.env.MAX_EMBEDDING_BATCH_SIZE || 4);
-const EMBEDDING_REQUEST_DELAY_MS = Number(
-  process.env.EMBEDDING_REQUEST_DELAY_MS || Math.ceil(60000 / VOYAGE_REQUESTS_PER_MINUTE) + 1000
-);
-const EMBEDDING_MAX_RETRIES = Number(process.env.EMBEDDING_MAX_RETRIES || 4);
-const EMBEDDING_RETRY_DELAY_MS = Number(process.env.EMBEDDING_RETRY_DELAY_MS || 65000);
-const RESET_COLLECTION = process.env.RESET_COLLECTION === 'true';
-const DRY_RUN = process.env.DRY_RUN === 'true';
-const MAX_CHUNKS = Number(process.env.MAX_CHUNKS || 0);
-const ALLOW_MOCK_EMBEDDINGS = process.env.ALLOW_MOCK_EMBEDDINGS === 'true';
-const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || 'voyage-3-large';
+
+// function for extracting value from .env file
+function getNumberEnv(name: string, fallback: number): number {
+  const rawValue = process.env[name];
+  if (!rawValue) {
+    return fallback;
+  }
+
+  const parsed = Number(rawValue);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`${name} must be a valid number`);
+  }
+
+  return parsed;
+}
+
+function getBooleanEnv(name: string, fallback: boolean): boolean {
+  const rawValue = process.env[name];
+  if (!rawValue) {
+    return fallback;
+  }
+
+  return rawValue === 'true';
+}
+
+function getStringEnv(name: string, fallback: string): string {
+  return process.env[name] || fallback;
+}
+
+const VOYAGE_REQUESTS_PER_MINUTE = getNumberEnv('VOYAGE_REQUESTS_PER_MINUTE', 300);
+const VOYAGE_TOKENS_PER_MINUTE = getNumberEnv('VOYAGE_TOKENS_PER_MINUTE', 100000);
+const MAX_EMBEDDING_BATCH_TOKENS = getNumberEnv('MAX_EMBEDDING_BATCH_TOKENS', 50000);
+const MAX_EMBEDDING_BATCH_SIZE = getNumberEnv('MAX_EMBEDDING_BATCH_SIZE', 12);
+const EMBEDDING_REQUEST_DELAY_MS = getNumberEnv('EMBEDDING_REQUEST_DELAY_MS', 250);
+const EMBEDDING_MAX_RETRIES = getNumberEnv('EMBEDDING_MAX_RETRIES', 5);
+const EMBEDDING_RETRY_DELAY_MS = getNumberEnv('EMBEDDING_RETRY_DELAY_MS', 5000);
+const RESET_COLLECTION = getBooleanEnv('RESET_COLLECTION', false);
+const DRY_RUN = getBooleanEnv('DRY_RUN', false);
+const EMBEDDING_MODEL = getStringEnv('EMBEDDING_MODEL', 'voyage-3-large');
 
 interface StandardDocument {
   chunk_id: string;
@@ -125,12 +150,6 @@ const TARGET_CHUNK_MAX_TOKENS = Number(process.env.TARGET_CHUNK_MAX_TOKENS || 70
 const HARD_CHUNK_SPLIT_THRESHOLD = Number(process.env.HARD_CHUNK_SPLIT_THRESHOLD || 800);
 const OVERSIZED_BLOCK_OVERLAP_TOKENS = Number(process.env.OVERSIZED_BLOCK_OVERLAP_TOKENS || 60);
 
-function assertPositiveNumber(name: string, value: number): void {
-  if (!Number.isFinite(value) || value <= 0) {
-    throw new Error(`${name} must be a positive number`);
-  }
-}
-
 class DatabaseSeeder {
   private client: MongoClient;
   private db: Db;
@@ -142,20 +161,8 @@ class DatabaseSeeder {
       throw new Error('MONGODB_URI environment variable is required');
     }
 
-    assertPositiveNumber('VOYAGE_REQUESTS_PER_MINUTE', VOYAGE_REQUESTS_PER_MINUTE);
-    assertPositiveNumber('VOYAGE_TOKENS_PER_MINUTE', VOYAGE_TOKENS_PER_MINUTE);
-    assertPositiveNumber('MAX_EMBEDDING_BATCH_TOKENS', MAX_EMBEDDING_BATCH_TOKENS);
-    assertPositiveNumber('MAX_EMBEDDING_BATCH_SIZE', MAX_EMBEDDING_BATCH_SIZE);
-    assertPositiveNumber('EMBEDDING_REQUEST_DELAY_MS', EMBEDDING_REQUEST_DELAY_MS);
-    assertPositiveNumber('EMBEDDING_MAX_RETRIES', EMBEDDING_MAX_RETRIES);
-    assertPositiveNumber('EMBEDDING_RETRY_DELAY_MS', EMBEDDING_RETRY_DELAY_MS);
-    assertPositiveNumber('TARGET_CHUNK_MIN_TOKENS', TARGET_CHUNK_MIN_TOKENS);
-    assertPositiveNumber('TARGET_CHUNK_MAX_TOKENS', TARGET_CHUNK_MAX_TOKENS);
-    assertPositiveNumber('HARD_CHUNK_SPLIT_THRESHOLD', HARD_CHUNK_SPLIT_THRESHOLD);
-    assertPositiveNumber('OVERSIZED_BLOCK_OVERLAP_TOKENS', OVERSIZED_BLOCK_OVERLAP_TOKENS);
-    if (MAX_CHUNKS < 0 || !Number.isFinite(MAX_CHUNKS)) {
-      throw new Error('MAX_CHUNKS must be zero or a positive number');
-    }
+   
+   
 
     this.client = new MongoClient(mongoUri);
     this.db = this.client.db('niaho_standards');
@@ -180,11 +187,6 @@ class DatabaseSeeder {
   async generateEmbeddings(texts: string[], inputType: 'document' | 'query' = 'document'): Promise<number[][]> {
     const voyageApiKey = process.env.VOYAGE_API_KEY;
     if (!voyageApiKey) {
-      // if (ALLOW_MOCK_EMBEDDINGS) {
-      //   console.warn('VOYAGE_API_KEY is missing. Using mock embeddings because ALLOW_MOCK_EMBEDDINGS=true.');
-      //   return texts.map((text) => this.generateMockEmbedding(text));
-      // }
-
       throw new Error('VOYAGE_API_KEY environment variable is required');
     }
 
@@ -219,10 +221,7 @@ class DatabaseSeeder {
           continue;
         }
 
-        // if (ALLOW_MOCK_EMBEDDINGS) {
-        //   console.warn('Using mock embeddings because ALLOW_MOCK_EMBEDDINGS=true.');
-        //   return texts.map((text) => this.generateMockEmbedding(text));
-        // }
+    
 
         throw new Error(`Embedding request failed with status ${response.status}: ${errorText}`);
       } catch (error) {
@@ -235,18 +234,10 @@ class DatabaseSeeder {
           continue;
         }
 
-        // if (ALLOW_MOCK_EMBEDDINGS) {
-        //   console.warn('Using mock embeddings because ALLOW_MOCK_EMBEDDINGS=true.');
-        //   return texts.map((text) => this.generateMockEmbedding(text));
-        // }
 
         throw error;
       }
     }
-
-    // if (ALLOW_MOCK_EMBEDDINGS) {
-    //   return texts.map((text) => this.generateMockEmbedding(text));
-    // }
 
     throw new Error('Failed to generate embeddings after exhausting retries');
   }
@@ -295,7 +286,8 @@ class DatabaseSeeder {
           { ordered: false }
         );
         return;
-      } catch (error) {
+      } 
+      catch (error) {
         if (!this.isRetryableMongoError(error) || attempt === EMBEDDING_MAX_RETRIES) {
           throw error;
         }
@@ -308,28 +300,7 @@ class DatabaseSeeder {
     }
   }
 
-  // Mock embeddings are intentionally disabled for challenge and production use.
-  // generateMockEmbedding(text: string): number[] {
-  //   const hash = this.simpleHash(text);
-  //   const embedding: number[] = [];
-  //
-  //   for (let i = 0; i < 1024; i++) {
-  //     const value = Math.sin(hash + i) * Math.cos(hash * i) * 0.1;
-  //     embedding.push(value);
-  //   }
-  //
-  //   return embedding;
-  // }
-
-  simpleHash(text: string): number {
-    let hash = 0;
-    for (let i = 0; i < text.length; i++) {
-      const char = text.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash; // Convert to 32-bit integer
-    }
-    return hash;
-  }
+ 
 
   resolvePdfPath(): string {
     const explicitPath = process.env.NIAHO_PDF_PATH;
@@ -590,7 +561,8 @@ class DatabaseSeeder {
   }
 
   createSectionChunks(chunk: ChunkRecord, sectionLines: string[]): ChunkRecord[] {
-    const units = this.buildSectionUnits(sectionLines, chunk.content_type);
+    const units = this.buildSectionUnits(sectionLines, chunk.content_type)
+      .flatMap((unit) => this.splitOversizedUnit(unit));
 
     if (units.length === 0) {
       return [{ ...chunk, subchunk_index: 1, subchunk_count: 1 }];
@@ -608,8 +580,8 @@ class DatabaseSeeder {
 
       if (shouldSplit) {
         groupedUnits.push(currentGroup);
-        currentGroup = this.buildOverlapUnits(currentGroup);
-        currentTokens = this.estimateTokenCount([chunk.heading, ...currentGroup.map((item) => item.text)].join('\n\n'));
+        currentGroup = [];
+        currentTokens = this.estimateTokenCount(chunk.heading);
       }
 
       currentGroup.push(unit);
@@ -729,27 +701,57 @@ class DatabaseSeeder {
     return units;
   }
 
-  buildOverlapUnits(units: Array<{ text: string; sr_id?: string }>): Array<{ text: string; sr_id?: string }> {
-    if (units.length === 0) {
+  getLastTokens(text: string, tokenCount: number): string {
+    const tokens = text.trim().split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) {
+      return '';
+    }
+
+    return tokens.slice(-tokenCount).join(' ');
+  }
+
+  splitOversizedUnit(unit: { text: string; sr_id?: string }): Array<{ text: string; sr_id?: string }> {
+    if (this.estimateTokenCount(unit.text) <= HARD_CHUNK_SPLIT_THRESHOLD) {
+      return [unit];
+    }
+
+    const tokens = unit.text.trim().split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) {
       return [];
     }
 
-    const overlapUnits: Array<{ text: string; sr_id?: string }> = [];
-    let overlapTokens = 0;
+    const segments: Array<{ text: string; sr_id?: string }> = [];
+    let startIndex = 0;
 
-    for (let index = units.length - 1; index >= 0; index -= 1) {
-      const unit = units[index];
-      const unitTokens = this.estimateTokenCount(unit.text);
+    while (startIndex < tokens.length) {
+      let endIndex = Math.min(tokens.length, startIndex + TARGET_CHUNK_MAX_TOKENS);
+      let segmentTokens = tokens.slice(startIndex, endIndex);
 
-      if (overlapUnits.length > 0 && overlapTokens + unitTokens > OVERSIZED_BLOCK_OVERLAP_TOKENS) {
+      while (segmentTokens.length > 1 && this.estimateTokenCount(segmentTokens.join(' ')) > HARD_CHUNK_SPLIT_THRESHOLD) {
+        endIndex -= 1;
+        segmentTokens = tokens.slice(startIndex, endIndex);
+      }
+
+      if (segmentTokens.length === 0) {
+        endIndex = Math.min(tokens.length, startIndex + 1);
+        segmentTokens = tokens.slice(startIndex, endIndex);
+      }
+
+      const segmentText = segmentTokens.join(' ').trim();
+      if (segmentText) {
+        segments.push({ text: segmentText, sr_id: unit.sr_id });
+      }
+
+      if (endIndex >= tokens.length) {
         break;
       }
 
-      overlapUnits.unshift(unit);
-      overlapTokens += unitTokens;
+      const overlapText = this.getLastTokens(segmentText, OVERSIZED_BLOCK_OVERLAP_TOKENS);
+      const overlapCount = overlapText ? overlapText.split(/\s+/).filter(Boolean).length : 0;
+      startIndex = Math.max(startIndex + 1, endIndex - overlapCount);
     }
 
-    return overlapUnits;
+    return segments;
   }
 
   extractSectionName(chapter: string): string {
@@ -835,14 +837,13 @@ class DatabaseSeeder {
       }
 
       const preparedChunks = this.prepareChunks(chunks);
-      const limitedChunks = MAX_CHUNKS > 0 ? preparedChunks.slice(0, MAX_CHUNKS) : preparedChunks;
-      const chapterSummary = this.summarizeChunks(limitedChunks);
-      const limitedBatches = this.createEmbeddingBatches(limitedChunks);
+      const chapterSummary = this.summarizeChunks(preparedChunks);
+      const limitedBatches = this.createEmbeddingBatches(preparedChunks);
       console.log(
         `Embedding profile: ${VOYAGE_REQUESTS_PER_MINUTE} RPM, ${VOYAGE_TOKENS_PER_MINUTE} TPM, ` +
         `${MAX_EMBEDDING_BATCH_TOKENS} max tokens per batch, ${MAX_EMBEDDING_BATCH_SIZE} max chunks per batch`
       );
-      console.log(`Prepared ${limitedChunks.length} chunks across ${limitedBatches.length} embedding batches`);
+      console.log(`Prepared ${preparedChunks.length} chunks across ${limitedBatches.length} embedding batches`);
       console.log(`Detected ${Object.keys(chapterSummary).length} chapters after chunking`);
 
       if (DRY_RUN) {
@@ -900,7 +901,7 @@ class DatabaseSeeder {
 
         await this.writeBatch(documents, `embedding batch ${batchIndex + 1}`);
         processedCount += documents.length;
-        console.log(`Inserted batch ${batchIndex + 1}: ${documents.length} documents (${processedCount}/${limitedChunks.length} total)`);
+        console.log(`Inserted batch ${batchIndex + 1}: ${documents.length} documents (${processedCount}/${preparedChunks.length} total)`);
 
         if (batchIndex < limitedBatches.length - 1) {
           console.log(`Waiting ${EMBEDDING_REQUEST_DELAY_MS}ms to respect embedding API rate limits...`);
