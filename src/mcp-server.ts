@@ -12,21 +12,27 @@ import {
 
 loadEnv();
 
+// Initialize the Model Context Protocol (MCP) server for the healthcare standards agent
 const server = new Server(
   {
+    // name and version of this MCP server
     name: 'healthcare-standards-agent',
     version: '1.0.0'
   },
   {
+    // capabilities will tell the MCP runtime what capabilities this agent has, e.g., what tools it can call
     capabilities: {
-      tools: {}
+    // we can have a different capabilities like: we can add resources, memory, or other capabilities that this agent can expose to the MCP runtime
+      tools: {} // declared the tools capability for tellinh the MCP server what tools this agent having so that the MCP runtime knows what tools this agent can call
     }
   }
 );
 
+// Here we are adding a request handler for the ListToolsRequestSchema so that when the MCP runtime asks this agent what tools it has, we will send  with a list of tools this agent can call
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   const tools: Tool[] = [
     {
+        // tool that performs semantic vector search over the standards knowledge base
       name: 'search_standards',
       description: 'Semantic vector search across all standards. Embeds the query, runs vector search, and returns the top matching evidence.',
       inputSchema: {
@@ -86,6 +92,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       }
     },
+
     {
       name: 'get_standard_by_chunk_id',
       description: 'Retrieve one exact standard chunk by chunk_id (e.g., QM_1_001). Use this for precise citation lookups.',
@@ -186,6 +193,7 @@ export async function main(): Promise<void> {
   await server.connect(transport);
   console.error('[MCP] Healthcare Standards Agent MCP Server ready');
 }
+
 
 if (require.main === module) {
   main().catch((error) => {
