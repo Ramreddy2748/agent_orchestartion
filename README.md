@@ -445,4 +445,4 @@ Manual artifacts still useful for final submission:
 - Atlas vector index screenshot
 - MCP client screenshots or screen recording
 - Test Demo recording: https://drive.google.com/file/d/1_KRqlbhahAX-bXnzOPrjN8bnw4uvVQJI/view?usp=sharing
-- GitHub repository: https://github.com/Ramreddy2748/agent_orchestartion
+- GitHub repository: https://github.com/Ramreddy2748/healthcare-standards-agent
